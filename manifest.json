@@ -1,0 +1,50 @@
+{
+  "manifest_version": 3,
+  "name": "NetSuite Spotlight Search",
+  "version": "1.0.0",
+  "description": "Quick search across NetSuite records with Spotlight-like interface",
+  "permissions": [
+    "activeTab",
+    "storage",
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://*.netsuite.com/*",
+    "https://*.suiteapp.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://*.netsuite.com/*", "https://*.suiteapp.com/*"],
+      "js": ["content.js"],
+      "css": ["spotlight.css"]
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["spotlight.html", "spotlight.js", "spotlight.css"],
+      "matches": ["https://*.netsuite.com/*", "https://*.suiteapp.com/*"]
+    }
+  ],
+  "commands": {
+    "open-spotlight": {
+      "suggested_key": {
+        "default": "Ctrl+K",
+        "mac": "Command+K"
+      },
+      "description": "Open NetSuite Spotlight Search"
+    }
+  },
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "NetSuite Spotlight Search"
+  }
+}
