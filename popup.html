@@ -123,9 +123,9 @@
     </div>
     
     <div class="shortcut">
-        <div>Press <span class="shortcut-key">Ctrl</span> + <span class="shortcut-key">Shift</span> + <span class="shortcut-key">K</span> to open</div>
+        <div>Press <span class="shortcut-key">Ctrl</span> + <span class="shortcut-key">Shift</span> + <span class="shortcut-key">F</span> to open</div>
         <div style="font-size: 12px; color: #6c757d; margin-top: 4px;">
-            (or <span class="shortcut-key">Cmd</span> + <span class="shortcut-key">Shift</span> + <span class="shortcut-key">K</span> on Mac)
+            (or <span class="shortcut-key">Cmd</span> + <span class="shortcut-key">Shift</span> + <span class="shortcut-key">F</span> on Mac)
         </div>
     </div>
     
@@ -142,83 +142,6 @@
         </div>
     </div>
 
-    <script>
-        // Inline popup script to avoid loading issues
-        document.addEventListener('DOMContentLoaded', function() {
-            const openBtn = document.getElementById('openSpotlight');
-            const statusIcon = document.getElementById('statusIcon');
-            const statusText = document.getElementById('statusText');
-            const statusDiv = document.getElementById('status');
-
-            // Check if we're on a NetSuite page
-            chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
-                const currentTab = tabs[0];
-                const isNetSuite = currentTab.url.includes('netsuite.com') || currentTab.url.includes('suiteapp.com');
-                
-                if (isNetSuite) {
-                    // Check NetSuite session status
-                    checkNetSuiteSession();
-                } else {
-                    statusIcon.textContent = '❌';
-                    statusText.textContent = 'Not on a NetSuite page';
-                    statusDiv.className = 'status disconnected';
-                    openBtn.disabled = true;
-                    openBtn.textContent = 'Navigate to NetSuite first';
-                    openBtn.style.background = '#ccc';
-                    openBtn.style.cursor = 'not-allowed';
-                }
-            });
-
-            // Open spotlight when button is clicked
-            openBtn.addEventListener('click', function() {
-                if (!openBtn.disabled) {
-                    chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
-                        chrome.tabs.sendMessage(tabs[0].id, {action: 'toggle-spotlight'}, function(response) {
-                            // Handle response or errors
-                            if (chrome.runtime.lastError) {
-                                console.log('Extension not ready on this page');
-                            }
-                        });
-                        window.close(); // Close popup
-                    });
-                }
-            });
-
-            function checkNetSuiteSession() {
-                chrome.storage.local.get(['netsuiteSession'], function(result) {
-                    const session = result.netsuiteSession;
-                    
-                    if (session && session.accountId) {
-                        statusIcon.textContent = '✅';
-                        statusText.textContent = `Ready - Account ${session.accountId}`;
-                        statusDiv.className = 'status connected';
-                        openBtn.disabled = false;
-                    } else {
-                        statusIcon.textContent = '🔄';
-                        statusText.textContent = 'Detecting NetSuite session...';
-                        statusDiv.className = 'status';
-                        
-                        // Try to refresh session info
-                        chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
-                            chrome.tabs.sendMessage(tabs[0].id, {action: 'refresh-session'}, function(response) {
-                                if (chrome.runtime.lastError) {
-                                    statusIcon.textContent = '⚠️';
-                                    statusText.textContent = 'Extension still loading...';
-                                    setTimeout(checkNetSuiteSession, 2000);
-                                } else if (response && response.success) {
-                                    setTimeout(checkNetSuiteSession, 1000);
-                                } else {
-                                    statusIcon.textContent = '✅';
-                                    statusText.textContent = 'Ready to search';
-                                    statusDiv.className = 'status connected';
-                                    openBtn.disabled = false;
-                                }
-                            });
-                        });
-                    }
-                });
-            }
-        });
-    </script>
+    <script src="popup.js"></script>
 </body>
 </html>

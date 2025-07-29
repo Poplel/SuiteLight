@@ -1,10 +1,63 @@
 /* NetSuite Spotlight Search Extension Styles */
 #netsuite-spotlight-overlay {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    background: rgba(0, 0, 0, 0.6) !important;
+    z-index: 999999 !important;
+    display: none !important;
 }
 
 #netsuite-spotlight-overlay * {
     box-sizing: border-box !important;
+}
+
+#netsuite-spotlight-overlay .spotlight-container {
+    position: absolute !important;
+    top: 15vh !important;
+    left: 50% !important;
+    transform: translateX(-50%) !important;
+    width: 600px !important;
+    background: white !important;
+    border-radius: 12px !important;
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3) !important;
+    overflow: hidden !important;
+    max-height: 70vh !important;
+    display: flex !important;
+    flex-direction: column !important;
+    animation: fadeIn 0.3s ease !important;
+}
+
+#netsuite-spotlight-overlay .search-input {
+    width: 100% !important;
+    padding: 20px 24px !important;
+    font-size: 18px !important;
+    border: none !important;
+    outline: none !important;
+    background: #fbf9f8 !important;
+    border-bottom: 1px solid #e9ecef !important;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+}
+
+#netsuite-spotlight-overlay .search-input::placeholder {
+    color: #6c757d !important;
+}
+
+#netsuite-spotlight-overlay .filter-bubbles {
+    padding: 16px 24px !important;
+    background: #fbf9f8 !important;
+    border-bottom: 1px solid #e9ecef !important;
+    display: flex !important;
+    gap: 8px !important;
+    overflow-x: auto !important;
+    overflow-y: visible !important;
+    min-height: 50px !important;
+    white-space: nowrap !important;
+    scroll-behavior: smooth !important;
+    -webkit-overflow-scrolling: touch !important;
 }
 
 #netsuite-spotlight-overlay .filter-bubble {
@@ -40,6 +93,22 @@
     background: #2a4f63 !important;
 }
 
+#netsuite-spotlight-overlay .results-container {
+    flex: 1 !important;
+    overflow-y: auto !important;
+    max-height: 400px !important;
+}
+
+#netsuite-spotlight-overlay .result-item {
+    padding: 12px 24px !important;
+    border-bottom: 1px solid #f1f3f4 !important;
+    cursor: pointer !important;
+    transition: background-color 0.15s ease !important;
+    display: flex !important;
+    align-items: center !important;
+    gap: 12px !important;
+}
+
 #netsuite-spotlight-overlay .result-item:hover {
     background: #fbf9f8 !important;
 }
@@ -48,8 +117,57 @@
     background: #e8f1f5 !important;
 }
 
-#netsuite-spotlight-overlay .search-input::placeholder {
-    color: #6c757d !important;
+#netsuite-spotlight-overlay .result-icon {
+    width: 32px !important;
+    height: 32px !important;
+    border-radius: 6px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    font-size: 16px !important;
+    background: #325c73 !important;
+    flex-shrink: 0 !important;
+}
+
+#netsuite-spotlight-overlay .result-content {
+    flex: 1 !important;
+    min-width: 0 !important;
+}
+
+#netsuite-spotlight-overlay .result-title {
+    font-weight: 500 !important;
+    font-size: 14px !important;
+    color: #202124 !important;
+    margin-bottom: 2px !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+}
+
+#netsuite-spotlight-overlay .result-subtitle {
+    font-size: 12px !important;
+    color: #5f6368 !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+}
+
+#netsuite-spotlight-overlay .result-type {
+    font-size: 11px !important;
+    color: #5f6368 !important;
+    background: #fbf9f8 !important;
+    padding: 2px 6px !important;
+    border-radius: 4px !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.5px !important;
+    flex-shrink: 0 !important;
+}
+
+#netsuite-spotlight-overlay .no-results {
+    padding: 40px 24px !important;
+    text-align: center !important;
+    color: #5f6368 !important;
+    font-size: 14px !important;
 }
 
 #netsuite-spotlight-overlay .loading {
@@ -75,10 +193,6 @@
         opacity: 1 !important; 
         transform: translateX(-50%) translateY(0) !important; 
     }
-}
-
-#netsuite-spotlight-overlay .spotlight-container {
-    animation: fadeIn 0.3s ease !important;
 }
 
 /* Scrollbar styling for filter bubbles */
@@ -107,16 +221,6 @@
 
 #netsuite-spotlight-overlay .results-container::-webkit-scrollbar-thumb:hover {
     background: #a8a8a8 !important;
-}
-
-/* Ensure overlay is above all NetSuite elements */
-#netsuite-spotlight-overlay {
-    z-index: 999999 !important;
-    position: fixed !important;
-    top: 0 !important;
-    left: 0 !important;
-    width: 100% !important;
-    height: 100% !important;
 }
 
 /* Responsive design for smaller screens */

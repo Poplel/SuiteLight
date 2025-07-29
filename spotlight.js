@@ -1,4 +1,4 @@
-// Content script for NetSuite Spotlight Search
+// External spotlight script to avoid CSP violations
 class NetSuiteSpotlight {
     constructor() {
         this.isVisible = false;
@@ -7,6 +7,7 @@ class NetSuiteSpotlight {
         this.accountId = null;
         this.baseUrl = null;
         this.authToken = null;
+        this.sessionId = null;
         
         this.init();
     }
@@ -167,18 +168,9 @@ class NetSuiteSpotlight {
         // Create overlay
         this.overlay = document.createElement('div');
         this.overlay.id = 'netsuite-spotlight-overlay';
-        this.overlay.style.cssText = `
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0, 0, 0, 0.6);
-            z-index: 999999;
-            display: none;
-        `;
+        this.overlay.className = 'netsuite-spotlight-overlay';
 
-        // Create spotlight container
+        // Create spotlight container with external HTML
         this.spotlightContainer = document.createElement('div');
         this.spotlightContainer.innerHTML = this.getSpotlightHTML();
         this.overlay.appendChild(this.spotlightContainer);
@@ -186,51 +178,16 @@ class NetSuiteSpotlight {
         // Add to page
         document.body.appendChild(this.overlay);
 
-        // Setup event listeners
-        this.setupEventListeners();
+        // Setup event listeners using external methods
+        this.setupSpotlightEventListeners();
     }
 
     getSpotlightHTML() {
         return `
-            <div class="spotlight-container" style="
-                position: absolute;
-                top: 15vh;
-                left: 50%;
-                transform: translateX(-50%);
-                width: 600px;
-                background: white;
-                border-radius: 12px;
-                box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
-                overflow: hidden;
-                max-height: 70vh;
-                display: flex;
-                flex-direction: column;
-                animation: fadeIn 0.3s ease;
-            ">
-                <input type="text" class="search-input" placeholder="Search NetSuite records..." id="spotlightSearch" style="
-                    width: 100%;
-                    padding: 20px 24px;
-                    font-size: 18px;
-                    border: none;
-                    outline: none;
-                    background: #fbf9f8;
-                    border-bottom: 1px solid #e9ecef;
-                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-                ">
+            <div class="spotlight-container">
+                <input type="text" class="search-input" placeholder="Search NetSuite records..." id="spotlightSearch">
                 
-                <div class="filter-bubbles" id="spotlightFilters" style="
-                    padding: 16px 24px;
-                    background: #fbf9f8;
-                    border-bottom: 1px solid #e9ecef;
-                    display: flex;
-                    gap: 8px;
-                    overflow-x: auto;
-                    overflow-y: visible;
-                    min-height: 50px;
-                    white-space: nowrap;
-                    scroll-behavior: smooth;
-                    -webkit-overflow-scrolling: touch;
-                ">
+                <div class="filter-bubbles" id="spotlightFilters">
                     <div class="filter-bubble active" data-type="all">All</div>
                     <div class="filter-bubble" data-type="customer">Customers</div>
                     <div class="filter-bubble" data-type="salesorder">Sales Orders</div>
@@ -241,23 +198,14 @@ class NetSuiteSpotlight {
                     <div class="filter-bubble" data-type="contact">Contacts</div>
                 </div>
 
-                <div class="results-container" id="spotlightResults" style="
-                    flex: 1;
-                    overflow-y: auto;
-                    max-height: 400px;
-                ">
-                    <div class="no-results" style="
-                        padding: 40px 24px;
-                        text-align: center;
-                        color: #5f6368;
-                        font-size: 14px;
-                    ">Start typing to search NetSuite records...</div>
+                <div class="results-container" id="spotlightResults">
+                    <div class="no-results">Start typing to search NetSuite records...</div>
                 </div>
             </div>
         `;
     }
 
-    setupEventListeners() {
+    setupSpotlightEventListeners() {
         const searchInput = this.overlay.querySelector('#spotlightSearch');
         const filterBubbles = this.overlay.querySelector('#spotlightFilters');
         const resultsContainer = this.overlay.querySelector('#spotlightResults');
@@ -267,68 +215,29 @@ class NetSuiteSpotlight {
         let activeFilters = ['all'];
         let searchTimeout = null;
 
+        // Store references for event handlers
+        this.currentResults = currentResults;
+        this.selectedIndex = selectedIndex;
+        this.activeFilters = activeFilters;
+
         // Search input handler with debouncing
         searchInput.addEventListener('input', (e) => {
             clearTimeout(searchTimeout);
             searchTimeout = setTimeout(() => {
-                this.performSearch(e.target.value, activeFilters);
+                this.performSearch(e.target.value, this.activeFilters);
             }, 300);
         });
 
         // Filter bubble handlers
         filterBubbles.addEventListener('click', (e) => {
             if (e.target.classList.contains('filter-bubble')) {
-                const filterType = e.target.dataset.type;
-                
-                if (filterType === 'all') {
-                    activeFilters = ['all'];
-                    filterBubbles.querySelectorAll('.filter-bubble').forEach(bubble => {
-                        bubble.classList.toggle('active', bubble.dataset.type === 'all');
-                    });
-                } else {
-                    if (activeFilters.includes('all')) {
-                        activeFilters = [];
-                        filterBubbles.querySelector('[data-type="all"]').classList.remove('active');
-                    }
-                    
-                    if (activeFilters.includes(filterType)) {
-                        activeFilters = activeFilters.filter(f => f !== filterType);
-                        e.target.classList.remove('active');
-                    } else {
-                        activeFilters.push(filterType);
-                        e.target.classList.add('active');
-                    }
-                    
-                    if (activeFilters.length === 0) {
-                        activeFilters = ['all'];
-                        filterBubbles.querySelector('[data-type="all"]').classList.add('active');
-                    }
-                }
-                
-                this.performSearch(searchInput.value, activeFilters);
+                this.handleFilterClick(e.target, filterBubbles, searchInput);
             }
         });
 
         // Keyboard navigation
         searchInput.addEventListener('keydown', (e) => {
-            const results = resultsContainer.querySelectorAll('.result-item');
-            
-            if (e.key === 'ArrowDown') {
-                e.preventDefault();
-                selectedIndex = Math.min(selectedIndex + 1, results.length - 1);
-                this.updateSelection(results, selectedIndex);
-            } else if (e.key === 'ArrowUp') {
-                e.preventDefault();
-                selectedIndex = Math.max(selectedIndex - 1, -1);
-                this.updateSelection(results, selectedIndex);
-            } else if (e.key === 'Enter') {
-                e.preventDefault();
-                if (selectedIndex >= 0 && results[selectedIndex]) {
-                    this.openRecord(currentResults[selectedIndex]);
-                }
-            } else if (e.key === 'Escape') {
-                this.hide();
-            }
+            this.handleKeyboardNavigation(e, resultsContainer);
         });
 
         // Click to close overlay
@@ -339,10 +248,62 @@ class NetSuiteSpotlight {
         });
     }
 
+    handleFilterClick(target, filterBubbles, searchInput) {
+        const filterType = target.dataset.type;
+        
+        if (filterType === 'all') {
+            this.activeFilters = ['all'];
+            filterBubbles.querySelectorAll('.filter-bubble').forEach(bubble => {
+                bubble.classList.toggle('active', bubble.dataset.type === 'all');
+            });
+        } else {
+            if (this.activeFilters.includes('all')) {
+                this.activeFilters = [];
+                filterBubbles.querySelector('[data-type="all"]').classList.remove('active');
+            }
+            
+            if (this.activeFilters.includes(filterType)) {
+                this.activeFilters = this.activeFilters.filter(f => f !== filterType);
+                target.classList.remove('active');
+            } else {
+                this.activeFilters.push(filterType);
+                target.classList.add('active');
+            }
+            
+            if (this.activeFilters.length === 0) {
+                this.activeFilters = ['all'];
+                filterBubbles.querySelector('[data-type="all"]').classList.add('active');
+            }
+        }
+        
+        this.performSearch(searchInput.value, this.activeFilters);
+    }
+
+    handleKeyboardNavigation(e, resultsContainer) {
+        const results = resultsContainer.querySelectorAll('.result-item');
+        
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            this.selectedIndex = Math.min(this.selectedIndex + 1, results.length - 1);
+            this.updateSelection(results, this.selectedIndex);
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            this.selectedIndex = Math.max(this.selectedIndex - 1, -1);
+            this.updateSelection(results, this.selectedIndex);
+        } else if (e.key === 'Enter') {
+            e.preventDefault();
+            if (this.selectedIndex >= 0 && this.currentResults[this.selectedIndex]) {
+                this.openRecord(this.currentResults[this.selectedIndex]);
+            }
+        } else if (e.key === 'Escape') {
+            this.hide();
+        }
+    }
+
     setupKeyboardListeners() {
         document.addEventListener('keydown', (e) => {
-            // Cmd+Shift+K or Ctrl+Shift+K to toggle spotlight
-            if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'K' && !this.isVisible) {
+            // Cmd+Shift+F or Ctrl+Shift+F to toggle spotlight
+            if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'F' && !this.isVisible) {
                 e.preventDefault();
                 this.show();
             }
@@ -356,14 +317,16 @@ class NetSuiteSpotlight {
         }
 
         const resultsContainer = this.overlay.querySelector('#spotlightResults');
-        resultsContainer.innerHTML = '<div class="loading" style="padding: 20px; text-align: center;">Searching...</div>';
+        resultsContainer.innerHTML = '<div class="loading">Searching...</div>';
 
         try {
             const results = await this.searchNetSuite(query.trim(), filters);
+            this.currentResults = results;
+            this.selectedIndex = -1;
             this.displayResults(results);
         } catch (error) {
             console.error('Search failed:', error);
-            resultsContainer.innerHTML = '<div class="error" style="padding: 20px; text-align: center; color: #dc3545;">Search failed. Please try again.</div>';
+            resultsContainer.innerHTML = '<div class="error">Search failed. Please try again.</div>';
         }
     }
 
@@ -416,7 +379,7 @@ class NetSuiteSpotlight {
     async useNetSuiteSearchAPI(recordType, query) {
         return new Promise((resolve) => {
             try {
-                window.require(['N/search'], function(search) {
+                window.require(['N/search'], (search) => {
                     try {
                         // Map our record types to NetSuite record types
                         const recordTypeMap = {
@@ -460,7 +423,7 @@ class NetSuiteSpotlight {
                         });
 
                         const searchResults = [];
-                        searchObj.run().each(function(result) {
+                        searchObj.run().each((result) => {
                             searchResults.push(result);
                             return searchResults.length < 20; // Limit to 20 results
                         });
@@ -476,7 +439,7 @@ class NetSuiteSpotlight {
                         console.error('NetSuite search API error:', searchError);
                         resolve([]);
                     }
-                }.bind(this));
+                });
                 
             } catch (requireError) {
                 console.error('NetSuite require error:', requireError);
@@ -533,21 +496,21 @@ class NetSuiteSpotlight {
                 id: id,
                 type: 'salesorder',
                 title: getValue('tranid'),
-                subtitle: `${getValue('total') || '0.00'} • ${getValue('trandate') || ''}`,
+                subtitle: `$${getValue('total') || '0.00'} • ${getValue('trandate') || ''}`,
                 url: `/app/accounting/transactions/salesord.nl?id=${id}`
             }),
             invoice: () => ({
                 id: id,
                 type: 'invoice',
                 title: getValue('tranid'),
-                subtitle: `${getValue('total') || '0.00'} • ${getValue('trandate') || ''}`,
+                subtitle: `$${getValue('total') || '0.00'} • ${getValue('trandate') || ''}`,
                 url: `/app/accounting/transactions/custinvc.nl?id=${id}`
             }),
             item: () => ({
                 id: id,
                 type: 'item',
                 title: getValue('displayname') || getValue('itemid'),
-                subtitle: `SKU: ${getValue('itemid')} • ${getValue('salesprice') || '0.00'}`,
+                subtitle: `SKU: ${getValue('itemid')} • $${getValue('salesprice') || '0.00'}`,
                 url: `/app/common/item/item.nl?id=${id}`
             }),
             employee: () => ({
@@ -597,159 +560,11 @@ class NetSuiteSpotlight {
         }
     }
 
-    buildSuiteQLQuery(recordType, query) {
-        // Build SuiteQL queries for different record types
-        const queries = {
-            customer: `
-                SELECT id, companyname, email, phone, entitystatus
-                FROM customer 
-                WHERE UPPER(companyname) LIKE UPPER('%${query}%') 
-                   OR UPPER(email) LIKE UPPER('%${query}%')
-                ORDER BY companyname
-                LIMIT 20
-            `,
-            salesOrder: `
-                SELECT id, tranid, entity, total, trandate, status
-                FROM salesorder 
-                WHERE UPPER(tranid) LIKE UPPER('%${query}%')
-                ORDER BY trandate DESC
-                LIMIT 20
-            `,
-            invoice: `
-                SELECT id, tranid, entity, total, trandate, status
-                FROM invoice 
-                WHERE UPPER(tranid) LIKE UPPER('%${query}%')
-                ORDER BY trandate DESC
-                LIMIT 20
-            `,
-            item: `
-                SELECT id, itemid, displayname, salesprice, quantityavailable
-                FROM item 
-                WHERE UPPER(itemid) LIKE UPPER('%${query}%') 
-                   OR UPPER(displayname) LIKE UPPER('%${query}%')
-                ORDER BY itemid
-                LIMIT 20
-            `,
-            employee: `
-                SELECT id, entityid, firstname, lastname, email, phone
-                FROM employee 
-                WHERE UPPER(firstname) LIKE UPPER('%${query}%') 
-                   OR UPPER(lastname) LIKE UPPER('%${query}%')
-                   OR UPPER(email) LIKE UPPER('%${query}%')
-                ORDER BY lastname, firstname
-                LIMIT 20
-            `,
-            vendor: `
-                SELECT id, companyname, email, phone
-                FROM vendor 
-                WHERE UPPER(companyname) LIKE UPPER('%${query}%') 
-                   OR UPPER(email) LIKE UPPER('%${query}%')
-                ORDER BY companyname
-                LIMIT 20
-            `,
-            contact: `
-                SELECT id, firstname, lastname, email, phone, company
-                FROM contact 
-                WHERE UPPER(firstname) LIKE UPPER('%${query}%') 
-                   OR UPPER(lastname) LIKE UPPER('%${query}%')
-                   OR UPPER(email) LIKE UPPER('%${query}%')
-                ORDER BY lastname, firstname
-                LIMIT 20
-            `
-        };
-
-        return queries[recordType] || '';
-    }
-
-    formatSearchResult(item, recordType) {
-        // Format search results for display
-        const formatters = {
-            customer: (item) => ({
-                id: item.id,
-                type: 'customer',
-                title: item.companyname || 'Unnamed Customer',
-                subtitle: `${item.email || ''} • ${item.phone || ''}`.replace(/^• |• $/, ''),
-                url: `/app/common/entity/custjob.nl?id=${item.id}`
-            }),
-            salesorder: (item) => ({
-                id: item.id,
-                type: 'salesorder',
-                title: item.tranid,
-                subtitle: `$${item.total || '0.00'} • ${item.trandate || ''}`,
-                url: `/app/accounting/transactions/salesord.nl?id=${item.id}`
-            }),
-            invoice: (item) => ({
-                id: item.id,
-                type: 'invoice',
-                title: item.tranid,
-                subtitle: `$${item.total || '0.00'} • ${item.trandate || ''}`,
-                url: `/app/accounting/transactions/custinvc.nl?id=${item.id}`
-            }),
-            item: (item) => ({
-                id: item.id,
-                type: 'item',
-                title: item.displayname || item.itemid,
-                subtitle: `SKU: ${item.itemid} • $${item.salesprice || '0.00'}`,
-                url: `/app/common/item/item.nl?id=${item.id}`
-            }),
-            employee: (item) => ({
-                id: item.id,
-                type: 'employee',
-                title: `${item.firstname || ''} ${item.lastname || ''}`.trim(),
-                subtitle: `${item.email || ''} • ${item.phone || ''}`.replace(/^• |• $/, ''),
-                url: `/app/common/entity/employee.nl?id=${item.id}`
-            }),
-            vendor: (item) => ({
-                id: item.id,
-                type: 'vendor',
-                title: item.companyname || 'Unnamed Vendor',
-                subtitle: `${item.email || ''} • ${item.phone || ''}`.replace(/^• |• $/, ''),
-                url: `/app/common/entity/vendor.nl?id=${item.id}`
-            }),
-            contact: (item) => ({
-                id: item.id,
-                type: 'contact',
-                title: `${item.firstname || ''} ${item.lastname || ''}`.trim(),
-                subtitle: `${item.company || ''} • ${item.email || ''}`.replace(/^• |• $/, ''),
-                url: `/app/common/entity/contact.nl?id=${item.id}`
-            })
-        };
-
-        return formatters[recordType] ? formatters[recordType](item) : item;
-    }
-
-    async makeNetSuiteAPICall(endpoint, options = {}) {
-        if (!this.baseUrl || !this.accountId) {
-            throw new Error('NetSuite session not initialized');
-        }
-
-        const url = `${this.baseUrl}/services/rest/query/v1/${endpoint}`;
-        
-        const defaultHeaders = {
-            'Authorization': `Bearer ${this.authToken}`,
-            'Content-Type': 'application/json'
-        };
-
-        const response = await fetch(url, {
-            ...options,
-            headers: {
-                ...defaultHeaders,
-                ...options.headers
-            }
-        });
-
-        if (!response.ok) {
-            throw new Error(`NetSuite API call failed: ${response.status} ${response.statusText}`);
-        }
-
-        return await response.json();
-    }
-
     displayResults(results) {
         const resultsContainer = this.overlay.querySelector('#spotlightResults');
         
         if (results.length === 0) {
-            resultsContainer.innerHTML = '<div class="no-results" style="padding: 40px 24px; text-align: center; color: #5f6368; font-size: 14px;">No results found</div>';
+            resultsContainer.innerHTML = '<div class="no-results">No results found</div>';
             return;
         }
 
@@ -764,54 +579,13 @@ class NetSuiteSpotlight {
         };
 
         const html = results.map((item, index) => `
-            <div class="result-item" data-index="${index}" style="
-                padding: 12px 24px;
-                border-bottom: 1px solid #f1f3f4;
-                cursor: pointer;
-                transition: background-color 0.15s ease;
-                display: flex;
-                align-items: center;
-                gap: 12px;
-            ">
-                <div class="result-icon" style="
-                    width: 32px;
-                    height: 32px;
-                    border-radius: 6px;
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    font-size: 16px;
-                    background: #325c73;
-                    flex-shrink: 0;
-                ">${iconMap[item.type] || '❓'}</div>
-                <div class="result-content" style="flex: 1; min-width: 0;">
-                    <div class="result-title" style="
-                        font-weight: 500;
-                        font-size: 14px;
-                        color: #202124;
-                        margin-bottom: 2px;
-                        white-space: nowrap;
-                        overflow: hidden;
-                        text-overflow: ellipsis;
-                    ">${item.title}</div>
-                    <div class="result-subtitle" style="
-                        font-size: 12px;
-                        color: #5f6368;
-                        white-space: nowrap;
-                        overflow: hidden;
-                        text-overflow: ellipsis;
-                    ">${item.subtitle}</div>
+            <div class="result-item" data-index="${index}">
+                <div class="result-icon">${iconMap[item.type] || '❓'}</div>
+                <div class="result-content">
+                    <div class="result-title">${item.title}</div>
+                    <div class="result-subtitle">${item.subtitle}</div>
                 </div>
-                <div class="result-type" style="
-                    font-size: 11px;
-                    color: #5f6368;
-                    background: #fbf9f8;
-                    padding: 2px 6px;
-                    border-radius: 4px;
-                    text-transform: uppercase;
-                    letter-spacing: 0.5px;
-                    flex-shrink: 0;
-                ">${item.type}</div>
+                <div class="result-type">${item.type}</div>
             </div>
         `).join('');
 
@@ -821,21 +595,21 @@ class NetSuiteSpotlight {
         resultsContainer.querySelectorAll('.result-item').forEach((item, index) => {
             item.addEventListener('click', () => this.openRecord(results[index]));
             item.addEventListener('mouseover', () => {
-                resultsContainer.querySelectorAll('.result-item').forEach(r => r.style.background = '');
-                item.style.background = '#fbf9f8';
+                resultsContainer.querySelectorAll('.result-item').forEach(r => r.classList.remove('selected'));
+                item.classList.add('selected');
+                this.selectedIndex = index;
             });
         });
     }
 
     updateSelection(results, selectedIndex) {
         results.forEach((item, index) => {
-            if (index === selectedIndex) {
-                item.style.background = '#e8f1f5';
-                item.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-            } else {
-                item.style.background = '';
-            }
+            item.classList.toggle('selected', index === selectedIndex);
         });
+
+        if (selectedIndex >= 0 && results[selectedIndex]) {
+            results[selectedIndex].scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        }
     }
 
     openRecord(record) {
@@ -880,7 +654,7 @@ class NetSuiteSpotlight {
         
         const resultsContainer = this.overlay.querySelector('#spotlightResults');
         if (resultsContainer) {
-            resultsContainer.innerHTML = '<div class="no-results" style="padding: 40px 24px; text-align: center; color: #5f6368; font-size: 14px;">Start typing to search NetSuite records...</div>';
+            resultsContainer.innerHTML = '<div class="no-results">Start typing to search NetSuite records...</div>';
         }
     }
 
