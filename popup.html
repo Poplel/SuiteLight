@@ -137,21 +137,8 @@
     </div>
     
     <div class="features">
-        <div class="feature">
-            <span class="feature-icon">⚡</span>
-            <span>Instant search across all record types</span>
-        </div>
-        <div class="feature">
-            <span class="feature-icon">🎯</span>
-            <span>Smart filtering and suggestions</span>
-        </div>
-        <div class="feature">
-            <span class="feature-icon">⌨️</span>
-            <span>Full keyboard navigation</span>
-        </div>
-        <div class="feature">
-            <span class="feature-icon">🚀</span>
-            <span>Direct record access</span>
+        <div style="font-size: 12px; color: #6c757d; text-align: center;">
+            Works on any NetSuite page with Ctrl+Shift+K
         </div>
     </div>
 
@@ -201,24 +188,30 @@
                 chrome.storage.local.get(['netsuiteSession'], function(result) {
                     const session = result.netsuiteSession;
                     
-                    if (session && session.authenticated && session.accountId) {
+                    if (session && session.accountId) {
                         statusIcon.textContent = '✅';
-                        statusText.textContent = `Connected to Account ${session.accountId}`;
+                        statusText.textContent = `Ready - Account ${session.accountId}`;
                         statusDiv.className = 'status connected';
                         openBtn.disabled = false;
                     } else {
-                        statusIcon.textContent = '⚠️';
-                        statusText.textContent = 'Initializing NetSuite session...';
-                        statusDiv.className = 'status disconnected';
+                        statusIcon.textContent = '🔄';
+                        statusText.textContent = 'Detecting NetSuite session...';
+                        statusDiv.className = 'status';
                         
                         // Try to refresh session info
                         chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
                             chrome.tabs.sendMessage(tabs[0].id, {action: 'refresh-session'}, function(response) {
                                 if (chrome.runtime.lastError) {
                                     statusIcon.textContent = '⚠️';
-                                    statusText.textContent = 'Extension loading... Try again in a moment';
+                                    statusText.textContent = 'Extension still loading...';
+                                    setTimeout(checkNetSuiteSession, 2000);
                                 } else if (response && response.success) {
                                     setTimeout(checkNetSuiteSession, 1000);
+                                } else {
+                                    statusIcon.textContent = '✅';
+                                    statusText.textContent = 'Ready to search';
+                                    statusDiv.className = 'status connected';
+                                    openBtn.disabled = false;
                                 }
                             });
                         });

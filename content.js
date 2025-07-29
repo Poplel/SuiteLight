@@ -12,14 +12,14 @@ class NetSuiteSpotlight {
     }
 
     async init() {
-        // Extract NetSuite session info
-        await this.extractNetSuiteSession();
-        
-        // Create spotlight elements
+        // Create spotlight elements first
         this.createSpotlightElements();
         
-        // Listen for keyboard shortcuts
+        // Setup keyboard listeners
         this.setupKeyboardListeners();
+        
+        // Extract NetSuite session info with retry
+        await this.extractNetSuiteSessionWithRetry();
         
         // Listen for messages from background script
         chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
@@ -28,12 +28,29 @@ class NetSuiteSpotlight {
             } else if (request.action === 'perform-search') {
                 this.performSearch(request.query, request.filters);
             } else if (request.action === 'refresh-session') {
-                this.extractNetSuiteSession().then(() => {
+                this.extractNetSuiteSessionWithRetry().then(() => {
                     sendResponse({ success: true });
                 });
                 return true; // Indicates async response
             }
         });
+    }
+
+    async extractNetSuiteSessionWithRetry() {
+        // Try immediately
+        await this.extractNetSuiteSession();
+        
+        // If no session found, try again after a short delay (page might still be loading)
+        if (!this.accountId && !this.authToken) {
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            await this.extractNetSuiteSession();
+        }
+        
+        // One more try after longer delay
+        if (!this.accountId && !this.authToken) {
+            await new Promise(resolve => setTimeout(resolve, 5000));
+            await this.extractNetSuiteSession();
+        }
     }
 
     async extractNetSuiteSession() {
@@ -208,7 +225,11 @@ class NetSuiteSpotlight {
                     display: flex;
                     gap: 8px;
                     overflow-x: auto;
+                    overflow-y: visible;
                     min-height: 50px;
+                    white-space: nowrap;
+                    scroll-behavior: smooth;
+                    -webkit-overflow-scrolling: touch;
                 ">
                     <div class="filter-bubble active" data-type="all">All</div>
                     <div class="filter-bubble" data-type="customer">Customers</div>
