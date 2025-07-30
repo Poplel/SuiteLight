@@ -24,15 +24,15 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["spotlight.js", "spotlight.css"],
+      "resources": ["spotlight.css"],
       "matches": ["https://*.netsuite.com/*", "https://*.suiteapp.com/*"]
     }
   ],
   "commands": {
     "open-spotlight": {
       "suggested_key": {
-        "default": "Ctrl+Shift+F",
-        "mac": "Command+Shift+F"
+        "default": "Ctrl+Shift+Space",
+        "mac": "Command+Shift+Space"
       },
       "description": "Open NetSuite Spotlight Search"
     }

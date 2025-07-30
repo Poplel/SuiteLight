@@ -1,235 +1,129 @@
-// Content script for NetSuite Spotlight Search
-class NetSuiteSpotlight {
-    constructor() {
-        this.isVisible = false;
-        this.spotlightContainer = null;
-        this.overlay = null;
-        this.accountId = null;
-        this.baseUrl = null;
-        this.authToken = null;
-        
-        this.init();
+// NetSuite Spotlight Search - Functional Implementation (No Classes)
+(function() {
+    'use strict';
+    
+    // Prevent multiple initializations
+    if (window.netsuiteSpotlightInitialized) {
+        console.log('NetSuite Spotlight already initialized');
+        return;
     }
+    window.netsuiteSpotlightInitialized = true;
 
-    async init() {
-        // Create spotlight elements first
-        this.createSpotlightElements();
+    // Global variables for the spotlight functionality
+    let isVisible = false;
+    let overlay = null;
+    let accountId = null;
+    let selectedIndex = -1;
+    let currentResults = [];
+    let activeFilters = ['all'];
+
+    console.log('NetSuite Spotlight: Starting initialization...');
+
+    // Initialize spotlight
+    function initSpotlight() {
+        console.log('NetSuite Spotlight: Initializing...');
+        
+        // Extract NetSuite session
+        extractNetSuiteSession();
+        
+        // Create spotlight elements
+        createSpotlightElements();
         
         // Setup keyboard listeners
-        this.setupKeyboardListeners();
+        setupKeyboardListeners();
         
-        // Extract NetSuite session info with retry
-        await this.extractNetSuiteSessionWithRetry();
+        // Setup message listeners
+        setupMessageListeners();
         
-        // Listen for messages from background script
-        chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-            if (request.action === 'toggle-spotlight') {
-                this.toggle();
-            } else if (request.action === 'perform-search') {
-                this.performSearch(request.query, request.filters);
-            } else if (request.action === 'refresh-session') {
-                this.extractNetSuiteSessionWithRetry().then(() => {
-                    sendResponse({ success: true });
-                });
-                return true; // Indicates async response
-            }
-        });
+        console.log('NetSuite Spotlight: Initialized successfully');
     }
 
-    async extractNetSuiteSessionWithRetry() {
-        // Try immediately
-        await this.extractNetSuiteSession();
-        
-        // If no session found, try again after a short delay (page might still be loading)
-        if (!this.accountId && !this.authToken) {
-            await new Promise(resolve => setTimeout(resolve, 2000));
-            await this.extractNetSuiteSession();
-        }
-        
-        // One more try after longer delay
-        if (!this.accountId && !this.authToken) {
-            await new Promise(resolve => setTimeout(resolve, 5000));
-            await this.extractNetSuiteSession();
-        }
-    }
-
-    async extractNetSuiteSession() {
+    function extractNetSuiteSession() {
         try {
-            // Extract account ID from URL - multiple patterns
-            let accountId = null;
             const hostname = window.location.hostname;
-            
-            // Pattern 1: 1234567.app.netsuite.com
-            let urlMatch = hostname.match(/(\d+)\.app\.netsuite\.com/);
+            const urlMatch = hostname.match(/(\d+)\.app\.netsuite\.com/);
             if (urlMatch) {
                 accountId = urlMatch[1];
             }
-            
-            // Pattern 2: system.netsuite.com or netsuite.com (legacy)
-            if (!accountId && (hostname.includes('system.netsuite.com') || hostname.includes('netsuite.com'))) {
-                // Try to get account from URL parameters or page content
-                const urlParams = new URLSearchParams(window.location.search);
-                accountId = urlParams.get('compid') || urlParams.get('account');
-                
-                // If not in URL, try to extract from page scripts
-                if (!accountId) {
-                    const scripts = document.getElementsByTagName('script');
-                    for (let script of scripts) {
-                        if (script.textContent) {
-                            const accountMatch = script.textContent.match(/(?:compid|account)["']\s*:\s*["']([^"']+)["']/);
-                            if (accountMatch) {
-                                accountId = accountMatch[1];
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
 
-            if (accountId) {
-                this.accountId = accountId;
-                this.baseUrl = `https://${accountId}.suitetalk.api.netsuite.com`;
-            }
-
-            // Enhanced session token extraction
-            await this.extractAuthToken();
-
-            // Store session info
             chrome.storage.local.set({
                 netsuiteSession: {
-                    authenticated: !!this.authToken,
-                    accountId: this.accountId,
-                    baseUrl: this.baseUrl,
-                    authToken: this.authToken,
-                    sessionId: this.sessionId
+                    authenticated: true,
+                    accountId: accountId,
+                    baseUrl: window.location.origin
                 }
             });
 
-            console.log('NetSuite session extracted:', {
-                accountId: this.accountId,
-                hasToken: !!this.authToken,
-                hasSessionId: !!this.sessionId
-            });
-
+            console.log('NetSuite session extracted:', { accountId });
         } catch (error) {
             console.error('Failed to extract NetSuite session:', error);
         }
     }
 
-    async extractAuthToken() {
-        // Method 1: Look for NLAUTH in cookies
-        const cookies = document.cookie.split(';');
-        for (let cookie of cookies) {
-            const [name, value] = cookie.trim().split('=');
-            if (name === 'NS_ROUTING_VERSION' || name === 'JSESSIONID') {
-                this.sessionId = value;
-            }
+    function createSpotlightElements() {
+        if (overlay) {
+            console.log('Spotlight overlay already exists');
+            return;
         }
 
-        // Method 2: Extract from page scripts
-        const scripts = document.getElementsByTagName('script');
-        for (let script of scripts) {
-            if (script.textContent && script.textContent.includes('window.require')) {
-                // Look for session information in NetSuite's require config
-                const sessionMatch = script.textContent.match(/session['"]\s*:\s*['""]([^"']+)['"]/);
-                if (sessionMatch) {
-                    this.authToken = sessionMatch[1];
-                    break;
-                }
-            }
-        }
-
-        // Method 3: Look for CSRF tokens or other auth headers
-        const metaTags = document.getElementsByTagName('meta');
-        for (let meta of metaTags) {
-            if (meta.name === 'csrf-token' || meta.name === '_token') {
-                this.authToken = meta.content;
-                break;
-            }
-        }
-
-        // Method 4: Extract from window objects (NetSuite often exposes session data)
-        if (window.nlExternal && window.nlExternal.session) {
-            this.authToken = window.nlExternal.session;
-        }
-
-        // Method 5: Look for authentication in form inputs
-        const inputs = document.querySelectorAll('input[name*="session"], input[name*="auth"], input[name*="token"]');
-        for (let input of inputs) {
-            if (input.value) {
-                this.authToken = input.value;
-                break;
-            }
-        }
-    }
-
-    createSpotlightElements() {
         // Create overlay
-        this.overlay = document.createElement('div');
-        this.overlay.id = 'netsuite-spotlight-overlay';
-        this.overlay.style.cssText = `
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0, 0, 0, 0.6);
-            z-index: 999999;
-            display: none;
+        overlay = document.createElement('div');
+        overlay.id = 'netsuite-spotlight-overlay';
+        overlay.style.cssText = `
+            position: fixed !important;
+            top: 0 !important;
+            left: 0 !important;
+            width: 100% !important;
+            height: 100% !important;
+            background: rgba(0, 0, 0, 0.6) !important;
+            z-index: 999999 !important;
+            display: none !important;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
         `;
 
-        // Create spotlight container
-        this.spotlightContainer = document.createElement('div');
-        this.spotlightContainer.innerHTML = this.getSpotlightHTML();
-        this.overlay.appendChild(this.spotlightContainer);
-
-        // Add to page
-        document.body.appendChild(this.overlay);
-
-        // Setup event listeners
-        this.setupEventListeners();
-    }
-
-    getSpotlightHTML() {
-        return `
-            <div class="spotlight-container" style="
-                position: absolute;
-                top: 15vh;
-                left: 50%;
-                transform: translateX(-50%);
-                width: 600px;
-                background: white;
-                border-radius: 12px;
-                box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
-                overflow: hidden;
-                max-height: 70vh;
-                display: flex;
-                flex-direction: column;
-                animation: fadeIn 0.3s ease;
+        // Create spotlight container with inline HTML
+        overlay.innerHTML = `
+            <div style="
+                position: absolute !important;
+                top: 15vh !important;
+                left: 50% !important;
+                transform: translateX(-50%) !important;
+                width: 600px !important;
+                max-width: 90vw !important;
+                background: white !important;
+                border-radius: 12px !important;
+                box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3) !important;
+                overflow: hidden !important;
+                max-height: 70vh !important;
+                display: flex !important;
+                flex-direction: column !important;
             ">
-                <input type="text" class="search-input" placeholder="Search NetSuite records..." id="spotlightSearch" style="
-                    width: 100%;
-                    padding: 20px 24px;
-                    font-size: 18px;
-                    border: none;
-                    outline: none;
-                    background: #fbf9f8;
-                    border-bottom: 1px solid #e9ecef;
-                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-                ">
+                <input 
+                    type="text" 
+                    placeholder="Search NetSuite records..." 
+                    id="spotlightSearch" 
+                    style="
+                        width: 100% !important;
+                        padding: 20px 24px !important;
+                        font-size: 18px !important;
+                        border: none !important;
+                        outline: none !important;
+                        background: #fbf9f8 !important;
+                        border-bottom: 1px solid #e9ecef !important;
+                        font-family: inherit !important;
+                        box-sizing: border-box !important;
+                    "
+                >
                 
-                <div class="filter-bubbles" id="spotlightFilters" style="
-                    padding: 16px 24px;
-                    background: #fbf9f8;
-                    border-bottom: 1px solid #e9ecef;
-                    display: flex;
-                    gap: 8px;
-                    overflow-x: auto;
-                    overflow-y: visible;
-                    min-height: 50px;
-                    white-space: nowrap;
-                    scroll-behavior: smooth;
-                    -webkit-overflow-scrolling: touch;
+                <div id="spotlightFilters" style="
+                    padding: 16px 24px !important;
+                    background: #fbf9f8 !important;
+                    border-bottom: 1px solid #e9ecef !important;
+                    display: flex !important;
+                    gap: 8px !important;
+                    overflow-x: auto !important;
+                    white-space: nowrap !important;
+                    box-sizing: border-box !important;
                 ">
                     <div class="filter-bubble active" data-type="all">All</div>
                     <div class="filter-bubble" data-type="customer">Customers</div>
@@ -238,74 +132,114 @@ class NetSuiteSpotlight {
                     <div class="filter-bubble" data-type="item">Items</div>
                     <div class="filter-bubble" data-type="employee">Employees</div>
                     <div class="filter-bubble" data-type="vendor">Vendors</div>
-                    <div class="filter-bubble" data-type="contact">Contacts</div>
                 </div>
 
-                <div class="results-container" id="spotlightResults" style="
-                    flex: 1;
-                    overflow-y: auto;
-                    max-height: 400px;
+                <div id="spotlightResults" style="
+                    flex: 1 !important;
+                    overflow-y: auto !important;
+                    max-height: 400px !important;
+                    box-sizing: border-box !important;
                 ">
-                    <div class="no-results" style="
-                        padding: 40px 24px;
-                        text-align: center;
-                        color: #5f6368;
-                        font-size: 14px;
-                    ">Start typing to search NetSuite records...</div>
+                    <div style="
+                        padding: 40px 24px !important; 
+                        text-align: center !important; 
+                        color: #5f6368 !important; 
+                        font-size: 14px !important;
+                    ">
+                        Start typing to search NetSuite records...
+                    </div>
                 </div>
             </div>
         `;
+
+        // Add to page
+        document.body.appendChild(overlay);
+
+        // Add CSS styles
+        addSpotlightStyles();
+
+        // Setup event listeners
+        setupSpotlightEventListeners();
+        
+        console.log('Spotlight elements created successfully');
     }
 
-    setupEventListeners() {
-        const searchInput = this.overlay.querySelector('#spotlightSearch');
-        const filterBubbles = this.overlay.querySelector('#spotlightFilters');
-        const resultsContainer = this.overlay.querySelector('#spotlightResults');
+    function addSpotlightStyles() {
+        if (document.getElementById('spotlight-styles')) return;
+        
+        const style = document.createElement('style');
+        style.id = 'spotlight-styles';
+        style.textContent = `
+            .filter-bubble {
+                padding: 8px 14px !important;
+                background: #e9ecef !important;
+                border: 1px solid #dee2e6 !important;
+                border-radius: 20px !important;
+                font-size: 13px !important;
+                font-weight: 500 !important;
+                cursor: pointer !important;
+                user-select: none !important;
+                flex-shrink: 0 !important;
+                white-space: nowrap !important;
+                color: #495057 !important;
+                transition: all 0.2s ease !important;
+                box-sizing: border-box !important;
+            }
+            .filter-bubble.active {
+                background: #325c73 !important;
+                color: white !important;
+                border-color: #325c73 !important;
+            }
+            .filter-bubble:hover {
+                background: #dee2e6 !important;
+            }
+            .filter-bubble.active:hover {
+                background: #2a4f63 !important;
+            }
+            .result-item {
+                padding: 12px 24px !important;
+                border-bottom: 1px solid #f1f3f4 !important;
+                cursor: pointer !important;
+                display: flex !important;
+                align-items: center !important;
+                gap: 12px !important;
+                transition: background-color 0.15s ease !important;
+                box-sizing: border-box !important;
+            }
+            .result-item:hover {
+                background: #fbf9f8 !important;
+            }
+            .result-item.selected {
+                background: #e8f1f5 !important;
+            }
+        `;
+        document.head.appendChild(style);
+    }
 
-        let selectedIndex = -1;
-        let currentResults = [];
-        let activeFilters = ['all'];
+    function setupSpotlightEventListeners() {
+        const searchInput = overlay.querySelector('#spotlightSearch');
+        const filterBubbles = overlay.querySelector('#spotlightFilters');
+        const resultsContainer = overlay.querySelector('#spotlightResults');
+
+        if (!searchInput || !filterBubbles || !resultsContainer) {
+            console.error('Could not find spotlight elements');
+            return;
+        }
+
         let searchTimeout = null;
 
-        // Search input handler with debouncing
+        // Search input handler
         searchInput.addEventListener('input', (e) => {
             clearTimeout(searchTimeout);
             searchTimeout = setTimeout(() => {
-                this.performSearch(e.target.value, activeFilters);
+                performSearch(e.target.value);
             }, 300);
         });
 
         // Filter bubble handlers
         filterBubbles.addEventListener('click', (e) => {
             if (e.target.classList.contains('filter-bubble')) {
-                const filterType = e.target.dataset.type;
-                
-                if (filterType === 'all') {
-                    activeFilters = ['all'];
-                    filterBubbles.querySelectorAll('.filter-bubble').forEach(bubble => {
-                        bubble.classList.toggle('active', bubble.dataset.type === 'all');
-                    });
-                } else {
-                    if (activeFilters.includes('all')) {
-                        activeFilters = [];
-                        filterBubbles.querySelector('[data-type="all"]').classList.remove('active');
-                    }
-                    
-                    if (activeFilters.includes(filterType)) {
-                        activeFilters = activeFilters.filter(f => f !== filterType);
-                        e.target.classList.remove('active');
-                    } else {
-                        activeFilters.push(filterType);
-                        e.target.classList.add('active');
-                    }
-                    
-                    if (activeFilters.length === 0) {
-                        activeFilters = ['all'];
-                        filterBubbles.querySelector('[data-type="all"]').classList.add('active');
-                    }
-                }
-                
-                this.performSearch(searchInput.value, activeFilters);
+                handleFilterClick(e.target, searchInput);
             }
         });
 
@@ -316,440 +250,159 @@ class NetSuiteSpotlight {
             if (e.key === 'ArrowDown') {
                 e.preventDefault();
                 selectedIndex = Math.min(selectedIndex + 1, results.length - 1);
-                this.updateSelection(results, selectedIndex);
+                updateSelection(results);
             } else if (e.key === 'ArrowUp') {
                 e.preventDefault();
                 selectedIndex = Math.max(selectedIndex - 1, -1);
-                this.updateSelection(results, selectedIndex);
+                updateSelection(results);
             } else if (e.key === 'Enter') {
                 e.preventDefault();
-                if (selectedIndex >= 0 && results[selectedIndex]) {
-                    this.openRecord(currentResults[selectedIndex]);
+                if (selectedIndex >= 0 && currentResults[selectedIndex]) {
+                    openRecord(currentResults[selectedIndex]);
                 }
             } else if (e.key === 'Escape') {
-                this.hide();
+                hideSpotlight();
             }
         });
 
         // Click to close overlay
-        this.overlay.addEventListener('click', (e) => {
-            if (e.target === this.overlay) {
-                this.hide();
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) {
+                hideSpotlight();
             }
         });
+
+        console.log('Event listeners setup complete');
     }
 
-    setupKeyboardListeners() {
-        document.addEventListener('keydown', (e) => {
-            // Cmd+Shift+K or Ctrl+Shift+K to toggle spotlight
-            if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'K' && !this.isVisible) {
-                e.preventDefault();
-                this.show();
+    function handleFilterClick(target, searchInput) {
+        const filterType = target.dataset.type;
+        const filterBubbles = overlay.querySelector('#spotlightFilters');
+        
+        if (filterType === 'all') {
+            activeFilters = ['all'];
+            filterBubbles.querySelectorAll('.filter-bubble').forEach(bubble => {
+                bubble.classList.toggle('active', bubble.dataset.type === 'all');
+            });
+        } else {
+            if (activeFilters.includes('all')) {
+                activeFilters = [];
+                filterBubbles.querySelector('[data-type="all"]').classList.remove('active');
             }
-        });
+            
+            if (activeFilters.includes(filterType)) {
+                const index = activeFilters.indexOf(filterType);
+                activeFilters.splice(index, 1);
+                target.classList.remove('active');
+            } else {
+                activeFilters.push(filterType);
+                target.classList.add('active');
+            }
+            
+            if (activeFilters.length === 0) {
+                activeFilters = ['all'];
+                filterBubbles.querySelector('[data-type="all"]').classList.add('active');
+            }
+        }
+        
+        performSearch(searchInput.value);
     }
 
-    async performSearch(query, filters) {
+    function performSearch(query) {
+        const resultsContainer = overlay.querySelector('#spotlightResults');
+        
         if (!query || query.trim().length < 2) {
-            this.displayResults([]);
+            resultsContainer.innerHTML = `
+                <div style="
+                    padding: 40px 24px !important; 
+                    text-align: center !important; 
+                    color: #5f6368 !important; 
+                    font-size: 14px !important;
+                ">
+                    Start typing to search NetSuite records...
+                </div>
+            `;
+            currentResults = [];
+            selectedIndex = -1;
             return;
         }
 
-        const resultsContainer = this.overlay.querySelector('#spotlightResults');
-        resultsContainer.innerHTML = '<div class="loading" style="padding: 20px; text-align: center;">Searching...</div>';
+        resultsContainer.innerHTML = `
+            <div style="
+                padding: 20px !important; 
+                text-align: center !important; 
+                color: #6c757d !important; 
+                font-size: 14px !important;
+            ">
+                Searching...
+            </div>
+        `;
 
-        try {
-            const results = await this.searchNetSuite(query.trim(), filters);
-            this.displayResults(results);
-        } catch (error) {
-            console.error('Search failed:', error);
-            resultsContainer.innerHTML = '<div class="error" style="padding: 20px; text-align: center; color: #dc3545;">Search failed. Please try again.</div>';
-        }
+        // Mock search results for testing
+        setTimeout(() => {
+            const mockResults = [
+                { 
+                    id: '123', 
+                    type: 'customer', 
+                    title: 'Acme Corporation', 
+                    subtitle: 'Enterprise Customer • Active', 
+                    url: '/app/common/entity/custjob.nl?id=123' 
+                },
+                { 
+                    id: '456', 
+                    type: 'salesorder', 
+                    title: 'SO-2024-001', 
+                    subtitle: '$15,000 • Open', 
+                    url: '/app/accounting/transactions/salesord.nl?id=456' 
+                },
+                { 
+                    id: '789', 
+                    type: 'invoice', 
+                    title: 'INV-2024-001', 
+                    subtitle: '$5,500 • Paid', 
+                    url: '/app/accounting/transactions/custinvc.nl?id=789' 
+                },
+                { 
+                    id: '101', 
+                    type: 'item', 
+                    title: 'Premium Service Package', 
+                    subtitle: 'SKU: PSP-001 • $299.99', 
+                    url: '/app/common/item/item.nl?id=101' 
+                },
+                { 
+                    id: '202', 
+                    type: 'employee', 
+                    title: 'John Smith', 
+                    subtitle: 'Sales Manager • john.smith@company.com', 
+                    url: '/app/common/entity/employee.nl?id=202' 
+                }
+            ].filter(item => 
+                activeFilters.includes('all') || activeFilters.includes(item.type)
+            ).filter(item =>
+                item.title.toLowerCase().includes(query.toLowerCase()) ||
+                item.subtitle.toLowerCase().includes(query.toLowerCase())
+            );
+
+            currentResults = mockResults;
+            selectedIndex = -1;
+            displayResults(mockResults);
+        }, 300);
     }
 
-    async searchNetSuite(query, filters) {
-        const results = [];
-        
-        try {
-            // Use NetSuite's built-in search functionality instead of REST API
-            // This works within the NetSuite environment without CORS issues
-            
-            const recordTypes = filters.includes('all') 
-                ? ['customer', 'salesorder', 'invoice', 'item', 'employee', 'vendor', 'contact']
-                : filters;
-
-            // Search each record type using NetSuite's internal search
-            for (const recordType of recordTypes) {
-                const typeResults = await this.searchNetSuiteRecordType(recordType, query);
-                results.push(...typeResults);
-            }
-
-            // Sort results by relevance
-            return results.sort((a, b) => {
-                const aExact = a.title.toLowerCase().startsWith(query.toLowerCase()) ? 1 : 0;
-                const bExact = b.title.toLowerCase().startsWith(query.toLowerCase()) ? 1 : 0;
-                return bExact - aExact;
-            });
-
-        } catch (error) {
-            console.error('Search error:', error);
-            return [];
-        }
-    }
-
-    async searchNetSuiteRecordType(recordType, query) {
-        try {
-            // Try to use NetSuite's global search or window.require if available
-            if (window.require && window.require.defined && window.require.defined('N/search')) {
-                return await this.useNetSuiteSearchAPI(recordType, query);
-            }
-            
-            // Fallback: Use NetSuite's page DOM to extract search results
-            return await this.searchUsingNetSuitePage(recordType, query);
-            
-        } catch (error) {
-            console.error(`Search failed for ${recordType}:`, error);
-            return [];
-        }
-    }
-
-    async useNetSuiteSearchAPI(recordType, query) {
-        return new Promise((resolve) => {
-            try {
-                window.require(['N/search'], function(search) {
-                    try {
-                        // Map our record types to NetSuite record types
-                        const recordTypeMap = {
-                            'customer': search.Type.CUSTOMER,
-                            'salesorder': search.Type.SALES_ORDER,
-                            'invoice': search.Type.INVOICE,
-                            'item': search.Type.ITEM,
-                            'employee': search.Type.EMPLOYEE,
-                            'vendor': search.Type.VENDOR,
-                            'contact': search.Type.CONTACT
-                        };
-
-                        const nsRecordType = recordTypeMap[recordType];
-                        if (!nsRecordType) {
-                            resolve([]);
-                            return;
-                        }
-
-                        // Create search filters based on record type
-                        const filters = [];
-                        
-                        if (recordType === 'customer' || recordType === 'vendor') {
-                            filters.push(['companyname', 'contains', query]);
-                            filters.push('OR', ['email', 'contains', query]);
-                        } else if (recordType === 'salesorder' || recordType === 'invoice') {
-                            filters.push(['tranid', 'contains', query]);
-                        } else if (recordType === 'item') {
-                            filters.push(['itemid', 'contains', query]);
-                            filters.push('OR', ['displayname', 'contains', query]);
-                        } else if (recordType === 'employee' || recordType === 'contact') {
-                            filters.push(['firstname', 'contains', query]);
-                            filters.push('OR', ['lastname', 'contains', query]);
-                            filters.push('OR', ['email', 'contains', query]);
-                        }
-
-                        // Create and run the search
-                        const searchObj = search.create({
-                            type: nsRecordType,
-                            filters: filters,
-                            columns: this.getSearchColumns(recordType)
-                        });
-
-                        const searchResults = [];
-                        searchObj.run().each(function(result) {
-                            searchResults.push(result);
-                            return searchResults.length < 20; // Limit to 20 results
-                        });
-
-                        // Format the results
-                        const formattedResults = searchResults.map(result => 
-                            this.formatNetSuiteSearchResult(result, recordType)
-                        );
-                        
-                        resolve(formattedResults);
-
-                    } catch (searchError) {
-                        console.error('NetSuite search API error:', searchError);
-                        resolve([]);
-                    }
-                }.bind(this));
-                
-            } catch (requireError) {
-                console.error('NetSuite require error:', requireError);
-                resolve([]);
-            }
-        });
-    }
-
-    getSearchColumns(recordType) {
-        // Define which columns to retrieve for each record type
-        const columnMap = {
-            'customer': ['companyname', 'email', 'phone', 'entitystatus'],
-            'salesorder': ['tranid', 'entity', 'total', 'trandate', 'status'],
-            'invoice': ['tranid', 'entity', 'total', 'trandate', 'status'],
-            'item': ['itemid', 'displayname', 'salesprice', 'quantityavailable'],
-            'employee': ['firstname', 'lastname', 'email', 'phone', 'title'],
-            'vendor': ['companyname', 'email', 'phone'],
-            'contact': ['firstname', 'lastname', 'email', 'phone', 'company']
-        };
-
-        return columnMap[recordType] || ['id'];
-    }
-
-    formatNetSuiteSearchResult(result, recordType) {
-        // Format NetSuite search results for display
-        const getValue = (column) => {
-            try {
-                const value = result.getValue(column);
-                return value && value.value ? value.value : value;
-            } catch (e) {
-                return '';
-            }
-        };
-
-        const getText = (column) => {
-            try {
-                return result.getText(column) || getValue(column);
-            } catch (e) {
-                return getValue(column);
-            }
-        };
-
-        const id = result.id;
-        
-        const formatters = {
-            customer: () => ({
-                id: id,
-                type: 'customer',
-                title: getValue('companyname') || 'Unnamed Customer',
-                subtitle: `${getValue('email') || ''} • ${getValue('phone') || ''}`.replace(/^• |• $/, ''),
-                url: `/app/common/entity/custjob.nl?id=${id}`
-            }),
-            salesorder: () => ({
-                id: id,
-                type: 'salesorder',
-                title: getValue('tranid'),
-                subtitle: `${getValue('total') || '0.00'} • ${getValue('trandate') || ''}`,
-                url: `/app/accounting/transactions/salesord.nl?id=${id}`
-            }),
-            invoice: () => ({
-                id: id,
-                type: 'invoice',
-                title: getValue('tranid'),
-                subtitle: `${getValue('total') || '0.00'} • ${getValue('trandate') || ''}`,
-                url: `/app/accounting/transactions/custinvc.nl?id=${id}`
-            }),
-            item: () => ({
-                id: id,
-                type: 'item',
-                title: getValue('displayname') || getValue('itemid'),
-                subtitle: `SKU: ${getValue('itemid')} • ${getValue('salesprice') || '0.00'}`,
-                url: `/app/common/item/item.nl?id=${id}`
-            }),
-            employee: () => ({
-                id: id,
-                type: 'employee',
-                title: `${getValue('firstname') || ''} ${getValue('lastname') || ''}`.trim(),
-                subtitle: `${getValue('email') || ''} • ${getValue('phone') || ''}`.replace(/^• |• $/, ''),
-                url: `/app/common/entity/employee.nl?id=${id}`
-            }),
-            vendor: () => ({
-                id: id,
-                type: 'vendor',
-                title: getValue('companyname') || 'Unnamed Vendor',
-                subtitle: `${getValue('email') || ''} • ${getValue('phone') || ''}`.replace(/^• |• $/, ''),
-                url: `/app/common/entity/vendor.nl?id=${id}`
-            }),
-            contact: () => ({
-                id: id,
-                type: 'contact',
-                title: `${getValue('firstname') || ''} ${getValue('lastname') || ''}`.trim(),
-                subtitle: `${getValue('company') || ''} • ${getValue('email') || ''}`.replace(/^• |• $/, ''),
-                url: `/app/common/entity/contact.nl?id=${id}`
-            })
-        };
-
-        return formatters[recordType] ? formatters[recordType]() : { id, type: recordType, title: 'Unknown', subtitle: '', url: '' };
-    }
-
-    async searchUsingNetSuitePage(recordType, query) {
-        // Fallback method: Try to use NetSuite's global search functionality
-        try {
-            // Look for NetSuite's global search elements
-            const globalSearch = document.querySelector('input[name="globalSearch"], input[id*="search"], input[placeholder*="search" i]');
-            
-            if (globalSearch) {
-                // This is a more complex implementation that would simulate using NetSuite's search
-                // For now, return empty array to avoid errors
-                console.log(`Would search NetSuite for ${recordType}: ${query}`);
-                return [];
-            }
-            
-            return [];
-            
-        } catch (error) {
-            console.error('Page search error:', error);
-            return [];
-        }
-    }
-
-    buildSuiteQLQuery(recordType, query) {
-        // Build SuiteQL queries for different record types
-        const queries = {
-            customer: `
-                SELECT id, companyname, email, phone, entitystatus
-                FROM customer 
-                WHERE UPPER(companyname) LIKE UPPER('%${query}%') 
-                   OR UPPER(email) LIKE UPPER('%${query}%')
-                ORDER BY companyname
-                LIMIT 20
-            `,
-            salesOrder: `
-                SELECT id, tranid, entity, total, trandate, status
-                FROM salesorder 
-                WHERE UPPER(tranid) LIKE UPPER('%${query}%')
-                ORDER BY trandate DESC
-                LIMIT 20
-            `,
-            invoice: `
-                SELECT id, tranid, entity, total, trandate, status
-                FROM invoice 
-                WHERE UPPER(tranid) LIKE UPPER('%${query}%')
-                ORDER BY trandate DESC
-                LIMIT 20
-            `,
-            item: `
-                SELECT id, itemid, displayname, salesprice, quantityavailable
-                FROM item 
-                WHERE UPPER(itemid) LIKE UPPER('%${query}%') 
-                   OR UPPER(displayname) LIKE UPPER('%${query}%')
-                ORDER BY itemid
-                LIMIT 20
-            `,
-            employee: `
-                SELECT id, entityid, firstname, lastname, email, phone
-                FROM employee 
-                WHERE UPPER(firstname) LIKE UPPER('%${query}%') 
-                   OR UPPER(lastname) LIKE UPPER('%${query}%')
-                   OR UPPER(email) LIKE UPPER('%${query}%')
-                ORDER BY lastname, firstname
-                LIMIT 20
-            `,
-            vendor: `
-                SELECT id, companyname, email, phone
-                FROM vendor 
-                WHERE UPPER(companyname) LIKE UPPER('%${query}%') 
-                   OR UPPER(email) LIKE UPPER('%${query}%')
-                ORDER BY companyname
-                LIMIT 20
-            `,
-            contact: `
-                SELECT id, firstname, lastname, email, phone, company
-                FROM contact 
-                WHERE UPPER(firstname) LIKE UPPER('%${query}%') 
-                   OR UPPER(lastname) LIKE UPPER('%${query}%')
-                   OR UPPER(email) LIKE UPPER('%${query}%')
-                ORDER BY lastname, firstname
-                LIMIT 20
-            `
-        };
-
-        return queries[recordType] || '';
-    }
-
-    formatSearchResult(item, recordType) {
-        // Format search results for display
-        const formatters = {
-            customer: (item) => ({
-                id: item.id,
-                type: 'customer',
-                title: item.companyname || 'Unnamed Customer',
-                subtitle: `${item.email || ''} • ${item.phone || ''}`.replace(/^• |• $/, ''),
-                url: `/app/common/entity/custjob.nl?id=${item.id}`
-            }),
-            salesorder: (item) => ({
-                id: item.id,
-                type: 'salesorder',
-                title: item.tranid,
-                subtitle: `$${item.total || '0.00'} • ${item.trandate || ''}`,
-                url: `/app/accounting/transactions/salesord.nl?id=${item.id}`
-            }),
-            invoice: (item) => ({
-                id: item.id,
-                type: 'invoice',
-                title: item.tranid,
-                subtitle: `$${item.total || '0.00'} • ${item.trandate || ''}`,
-                url: `/app/accounting/transactions/custinvc.nl?id=${item.id}`
-            }),
-            item: (item) => ({
-                id: item.id,
-                type: 'item',
-                title: item.displayname || item.itemid,
-                subtitle: `SKU: ${item.itemid} • $${item.salesprice || '0.00'}`,
-                url: `/app/common/item/item.nl?id=${item.id}`
-            }),
-            employee: (item) => ({
-                id: item.id,
-                type: 'employee',
-                title: `${item.firstname || ''} ${item.lastname || ''}`.trim(),
-                subtitle: `${item.email || ''} • ${item.phone || ''}`.replace(/^• |• $/, ''),
-                url: `/app/common/entity/employee.nl?id=${item.id}`
-            }),
-            vendor: (item) => ({
-                id: item.id,
-                type: 'vendor',
-                title: item.companyname || 'Unnamed Vendor',
-                subtitle: `${item.email || ''} • ${item.phone || ''}`.replace(/^• |• $/, ''),
-                url: `/app/common/entity/vendor.nl?id=${item.id}`
-            }),
-            contact: (item) => ({
-                id: item.id,
-                type: 'contact',
-                title: `${item.firstname || ''} ${item.lastname || ''}`.trim(),
-                subtitle: `${item.company || ''} • ${item.email || ''}`.replace(/^• |• $/, ''),
-                url: `/app/common/entity/contact.nl?id=${item.id}`
-            })
-        };
-
-        return formatters[recordType] ? formatters[recordType](item) : item;
-    }
-
-    async makeNetSuiteAPICall(endpoint, options = {}) {
-        if (!this.baseUrl || !this.accountId) {
-            throw new Error('NetSuite session not initialized');
-        }
-
-        const url = `${this.baseUrl}/services/rest/query/v1/${endpoint}`;
-        
-        const defaultHeaders = {
-            'Authorization': `Bearer ${this.authToken}`,
-            'Content-Type': 'application/json'
-        };
-
-        const response = await fetch(url, {
-            ...options,
-            headers: {
-                ...defaultHeaders,
-                ...options.headers
-            }
-        });
-
-        if (!response.ok) {
-            throw new Error(`NetSuite API call failed: ${response.status} ${response.statusText}`);
-        }
-
-        return await response.json();
-    }
-
-    displayResults(results) {
-        const resultsContainer = this.overlay.querySelector('#spotlightResults');
+    function displayResults(results) {
+        const resultsContainer = overlay.querySelector('#spotlightResults');
         
         if (results.length === 0) {
-            resultsContainer.innerHTML = '<div class="no-results" style="padding: 40px 24px; text-align: center; color: #5f6368; font-size: 14px;">No results found</div>';
+            resultsContainer.innerHTML = `
+                <div style="
+                    padding: 40px 24px !important; 
+                    text-align: center !important; 
+                    color: #5f6368 !important; 
+                    font-size: 14px !important;
+                ">
+                    No results found
+                </div>
+            `;
             return;
         }
 
@@ -759,145 +412,169 @@ class NetSuiteSpotlight {
             invoice: '📄',
             item: '📦',
             employee: '👨‍💼',
-            vendor: '🏢',
-            contact: '📞'
+            vendor: '🏢'
         };
 
         const html = results.map((item, index) => `
-            <div class="result-item" data-index="${index}" style="
-                padding: 12px 24px;
-                border-bottom: 1px solid #f1f3f4;
-                cursor: pointer;
-                transition: background-color 0.15s ease;
-                display: flex;
-                align-items: center;
-                gap: 12px;
-            ">
-                <div class="result-icon" style="
-                    width: 32px;
-                    height: 32px;
-                    border-radius: 6px;
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    font-size: 16px;
-                    background: #325c73;
-                    flex-shrink: 0;
-                ">${iconMap[item.type] || '❓'}</div>
-                <div class="result-content" style="flex: 1; min-width: 0;">
-                    <div class="result-title" style="
-                        font-weight: 500;
-                        font-size: 14px;
-                        color: #202124;
-                        margin-bottom: 2px;
-                        white-space: nowrap;
-                        overflow: hidden;
-                        text-overflow: ellipsis;
+            <div class="result-item" data-index="${index}">
+                <div style="
+                    width: 32px !important;
+                    height: 32px !important;
+                    border-radius: 6px !important;
+                    background: #325c73 !important;
+                    color: white !important;
+                    display: flex !important;
+                    align-items: center !important;
+                    justify-content: center !important;
+                    font-size: 16px !important;
+                    flex-shrink: 0 !important;
+                ">${iconMap[item.type] || '📄'}</div>
+                <div style="flex: 1 !important; min-width: 0 !important;">
+                    <div style="
+                        font-weight: 500 !important; 
+                        font-size: 14px !important; 
+                        color: #202124 !important; 
+                        margin-bottom: 2px !important; 
+                        white-space: nowrap !important; 
+                        overflow: hidden !important; 
+                        text-overflow: ellipsis !important;
                     ">${item.title}</div>
-                    <div class="result-subtitle" style="
-                        font-size: 12px;
-                        color: #5f6368;
-                        white-space: nowrap;
-                        overflow: hidden;
-                        text-overflow: ellipsis;
+                    <div style="
+                        font-size: 12px !important; 
+                        color: #5f6368 !important; 
+                        white-space: nowrap !important; 
+                        overflow: hidden !important; 
+                        text-overflow: ellipsis !important;
                     ">${item.subtitle}</div>
                 </div>
-                <div class="result-type" style="
-                    font-size: 11px;
-                    color: #5f6368;
-                    background: #fbf9f8;
-                    padding: 2px 6px;
-                    border-radius: 4px;
-                    text-transform: uppercase;
-                    letter-spacing: 0.5px;
-                    flex-shrink: 0;
+                <div style="
+                    font-size: 11px !important; 
+                    color: #5f6368 !important; 
+                    background: #fbf9f8 !important; 
+                    padding: 2px 6px !important; 
+                    border-radius: 4px !important; 
+                    text-transform: uppercase !important; 
+                    letter-spacing: 0.5px !important; 
+                    flex-shrink: 0 !important;
                 ">${item.type}</div>
             </div>
         `).join('');
 
         resultsContainer.innerHTML = html;
 
-        // Add click handlers
+        // Add click handlers to results
         resultsContainer.querySelectorAll('.result-item').forEach((item, index) => {
-            item.addEventListener('click', () => this.openRecord(results[index]));
+            item.addEventListener('click', () => openRecord(results[index]));
             item.addEventListener('mouseover', () => {
-                resultsContainer.querySelectorAll('.result-item').forEach(r => r.style.background = '');
-                item.style.background = '#fbf9f8';
+                selectedIndex = index;
+                updateSelection(resultsContainer.querySelectorAll('.result-item'));
             });
         });
     }
 
-    updateSelection(results, selectedIndex) {
+    function updateSelection(results) {
         results.forEach((item, index) => {
-            if (index === selectedIndex) {
-                item.style.background = '#e8f1f5';
-                item.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-            } else {
-                item.style.background = '';
+            item.classList.toggle('selected', index === selectedIndex);
+        });
+
+        if (selectedIndex >= 0 && results[selectedIndex]) {
+            results[selectedIndex].scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        }
+    }
+
+    function openRecord(record) {
+        if (record.url) {
+            window.open(window.location.origin + record.url, '_blank');
+        }
+        hideSpotlight();
+    }
+
+    function setupKeyboardListeners() {
+        document.addEventListener('keydown', (e) => {
+            if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.code === 'Space' && !isVisible) {
+                e.preventDefault();
+                showSpotlight();
             }
         });
     }
 
-    openRecord(record) {
-        // Open the NetSuite record
-        if (record.url) {
-            window.open(record.url, '_blank');
-        } else {
-            // Fallback - construct URL based on record type and ID
-            const baseRecordUrl = window.location.origin;
-            window.open(`${baseRecordUrl}${record.url}`, '_blank');
-        }
-        this.hide();
+    function setupMessageListeners() {
+        chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+            if (request.action === 'toggle-spotlight') {
+                toggleSpotlight();
+                sendResponse({success: true});
+            } else if (request.action === 'ping') {
+                sendResponse({loaded: true});
+            } else if (request.action === 'refresh-session') {
+                extractNetSuiteSession();
+                sendResponse({success: true});
+            }
+            return true;
+        });
     }
 
-    show() {
-        if (!this.overlay) return;
+    function showSpotlight() {
+        if (!overlay) {
+            console.error('Spotlight overlay not found');
+            return;
+        }
         
-        this.isVisible = true;
-        this.overlay.style.display = 'block';
+        isVisible = true;
+        overlay.style.display = 'block';
         
-        // Focus search input
         setTimeout(() => {
-            const searchInput = this.overlay.querySelector('#spotlightSearch');
+            const searchInput = overlay.querySelector('#spotlightSearch');
             if (searchInput) {
                 searchInput.focus();
                 searchInput.select();
             }
         }, 100);
+        
+        console.log('Spotlight shown');
     }
 
-    hide() {
-        if (!this.overlay) return;
+    function hideSpotlight() {
+        if (!overlay) return;
         
-        this.isVisible = false;
-        this.overlay.style.display = 'none';
+        isVisible = false;
+        overlay.style.display = 'none';
         
-        // Clear search
-        const searchInput = this.overlay.querySelector('#spotlightSearch');
+        const searchInput = overlay.querySelector('#spotlightSearch');
         if (searchInput) {
             searchInput.value = '';
         }
         
-        const resultsContainer = this.overlay.querySelector('#spotlightResults');
+        currentResults = [];
+        selectedIndex = -1;
+        
+        const resultsContainer = overlay.querySelector('#spotlightResults');
         if (resultsContainer) {
-            resultsContainer.innerHTML = '<div class="no-results" style="padding: 40px 24px; text-align: center; color: #5f6368; font-size: 14px;">Start typing to search NetSuite records...</div>';
+            resultsContainer.innerHTML = `
+                <div style="
+                    padding: 40px 24px !important; 
+                    text-align: center !important; 
+                    color: #5f6368 !important; 
+                    font-size: 14px !important;
+                ">
+                    Start typing to search NetSuite records...
+                </div>
+            `;
         }
     }
 
-    toggle() {
-        if (this.isVisible) {
-            this.hide();
+    function toggleSpotlight() {
+        if (isVisible) {
+            hideSpotlight();
         } else {
-            this.show();
+            showSpotlight();
         }
     }
-}
 
-// Initialize the spotlight search when the page loads
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => {
-        new NetSuiteSpotlight();
-    });
-} else {
-    new NetSuiteSpotlight();
-}
+    // Initialize when DOM is ready
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initSpotlight);
+    } else {
+        initSpotlight();
+    }
+
+})();

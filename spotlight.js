@@ -26,13 +26,18 @@ class NetSuiteSpotlight {
         chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             if (request.action === 'toggle-spotlight') {
                 this.toggle();
+                sendResponse({success: true});
             } else if (request.action === 'perform-search') {
                 this.performSearch(request.query, request.filters);
+                sendResponse({success: true});
             } else if (request.action === 'refresh-session') {
                 this.extractNetSuiteSessionWithRetry().then(() => {
                     sendResponse({ success: true });
                 });
                 return true; // Indicates async response
+            } else if (request.action === 'ping') {
+                // Respond to ping to indicate content script is loaded
+                sendResponse({loaded: true});
             }
         });
     }
@@ -302,8 +307,8 @@ class NetSuiteSpotlight {
 
     setupKeyboardListeners() {
         document.addEventListener('keydown', (e) => {
-            // Cmd+Shift+F or Ctrl+Shift+F to toggle spotlight
-            if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'F' && !this.isVisible) {
+            // Cmd+Shift+Space or Ctrl+Shift+Space to toggle spotlight
+            if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.code === 'Space' && !this.isVisible) {
                 e.preventDefault();
                 this.show();
             }
